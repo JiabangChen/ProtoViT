@@ -2,7 +2,7 @@ base_architecture = 'deit_small_patch16_224'
 radius = 1 # unit of patches 
 img_size = 224
 if base_architecture == 'deit_small_patch16_224':
-    prototype_shape = (2000, 384, 4)
+    prototype_shape = (2000, 384, 4) # 传统P方法是（2000，384，1，1）即表达单个P向量的长和宽，这里的4是有几个prototypical parts
 elif base_architecture == 'deit_tiny_patch16_224':
     prototype_shape = (2000, 192, 4)
 elif base_architecture == 'cait_xxs24_224':
@@ -14,7 +14,7 @@ prototype_activation_function = 'log'
 add_on_layers_type = 'regular'
 experiment_run = 'exp1'
 
-data_path =  "./cub200_cropped/"
+data_path =  "./datasets/cub200_cropped/" # 适配数据集读取路径，jiabang's change
 train_dir = data_path + 'train_cropped_augmented/'
 test_dir = data_path + 'test_cropped/'
 train_push_dir = data_path + 'train_cropped/'
@@ -39,7 +39,7 @@ coefs = {
     'sep': 0.1,
     'l1': 1e-2,
     'orth': 1e-3,
-    'coh': 3e-3#,
+    'coh': 3e-3,
 }
 
 coefs_slots = {'coh': 1e-6}

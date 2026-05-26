@@ -34,6 +34,10 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
             # nn.Module has implemented __call__() function
             # so no need to call .forward
             output, min_distances, values = model(input)
+            # 这三个参数形状分别是（B，200），（B，2000），（B，2000，4）
+            # 含义是output:每一个图的输出logits
+            # min_distances: 用最大cosine similarity score减去实际的每一个图中每一个P对于这个图的cosine similarity score来表示某一个P到某一张图的距离
+            # values：对于每一张图，每一个P的每一个小P在考虑adjacent mask的情况下和这张图的最大cosine similarity score
             # compute loss
             cross_entropy = torch.nn.functional.cross_entropy(output, target)
 
@@ -45,23 +49,26 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
                 #             * model.prototype_shape[2])
                 #             #* model.prototype_shape[3]) # dim*1*1 
                 prototypes_of_correct_class = torch.t(model.prototype_class_identity[:,label]).cuda()
-                prototypes_of_correct_class = prototypes_of_correct_class.unsqueeze(-1)
+                prototypes_of_correct_class = prototypes_of_correct_class.unsqueeze(-1) # (B,2000,1)
                 max_activations = -min_distances
 
                 ### retrieve slots 
                 # a soft approximation of 1, 0 s 
-                slots = torch.sigmoid(model.patch_select*model.temp)# 2000, 1, 4
+                slots = torch.sigmoid(model.patch_select*model.temp)# 1, 2000, 4，指示函数的输出（1，2000，4）
                 #factor = ((slots.sum(-1))**0.5).unsqueeze(-1) # 2000, 1, 1
-                if clst_k == 1:
-                    if not sum_cls: 
+                if clst_k == 1: # k=1
+                    if not sum_cls: # sum_cls = False
                         correct_class_prototype_activations =  values * prototypes_of_correct_class # bsz, 2000, 4
+                        # 点乘只会保留图所属那类的P和图的相似值
                         correct_class_proto_act_max_sub_patch, _ = torch.max(correct_class_prototype_activations, dim = 2) # bsz, 2000
-                        correct_class_prototype_activations, _ = torch.max(correct_class_proto_act_max_sub_patch, dim=1) # bsz 
+                        # 找出每一个P和图的四个相似值中最大的那个，即最相似的小P-token对的相似值
+                        correct_class_prototype_activations, _ = torch.max(correct_class_proto_act_max_sub_patch, dim=1) # bsz
+                        # 找出所有的此图所属类的P和此图的最大相似值
                     else:
                         correct_class_prototype_activations = (values.sum(-1)) * prototypes_of_correct_class.squeeze(-1) # bsz, 2000, 1
                         correct_class_prototype_activations, _ = torch.max(correct_class_prototype_activations, dim=1) 
                         
-                    cluster_cost = torch.mean(correct_class_prototype_activations)
+                    cluster_cost = torch.mean(correct_class_prototype_activations) # cluster loss，负号在coef中添加
                 else:
                     # clst_k is a hyperparameter that lets the cluster cost apply in a "top-k" fashion:
                     #the original cluster cost is equivalent to the k = 1 case
@@ -72,37 +79,45 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
                     cluster_cost = torch.mean(top_k_correct_class_prototype_activations)
 
                 # calculate separation cost
-                prototypes_of_wrong_class = (1 - prototypes_of_correct_class.squeeze(-1)).unsqueeze(-1)
+                prototypes_of_wrong_class = (1 - prototypes_of_correct_class.squeeze(-1)).unsqueeze(-1) # (B,2000,1)
+                # 非此图类的P的置为1
                 # inverted_distances_to_nontarget_prototypes, _ = \
                 #     torch.max((max_dist - min_distances) * prototypes_of_wrong_class, dim=1)
                 # separation_cost = torch.mean(max_dist - inverted_distances_to_nontarget_prototypes)
                 
                 if not sum_cls:
                     incorrect_class_prototype_activations_sub, _ = torch.max(values * prototypes_of_wrong_class, dim=2)# bsz, 2000
+                    # 类似于求clst loss，把非此图类的P与此图的4个相似值保留，然后对每一个P找出最相似的小P-token对
                     incorrect_class_prototype_activations, _ = torch.max(incorrect_class_prototype_activations_sub, dim=1) # bsz
+                    # 然后，求出非此图类的P与此图的最大相似值
                 else:
                     #values_slot = (values.clone())*slots
                     incorrect_class_prototype_activations = (values.sum(-1)) * prototypes_of_wrong_class.squeeze(-1)
                     incorrect_class_prototype_activations, _ = torch.max(incorrect_class_prototype_activations, dim=1) 
-                separation_cost = torch.mean(incorrect_class_prototype_activations)
+                separation_cost = torch.mean(incorrect_class_prototype_activations) # separation loss
                 
                 # calculate avg cluster cost
                 avg_separation_cost = \
-                    torch.sum(values * prototypes_of_wrong_class, dim=1) / (values.shape[-1]*torch.sum(prototypes_of_wrong_class, dim=1))
-                avg_separation_cost = torch.mean(avg_separation_cost)
+                    torch.sum(values * prototypes_of_wrong_class, dim=1) / (torch.sum(prototypes_of_wrong_class, dim=1))
+                # jiabang's change，删除values.shape[-1]*，逻辑才是对的，即对于每一个样本，都把非此样本类的P的各个小P与此样本的相似值沿着
+                # 每一个小P维度求和，然后除以小P总数，结果是（B，4）
+                avg_separation_cost = torch.mean(avg_separation_cost) # 然后这里对每一个样本，每一个小P的平均相似值求和之后除以（B*4）
                 
                 #optimize orthogonality of prototype_vector, borrowed from tesnet 
                 # ortho loss version 1 
                 #factor =  (model.prototype_shape[-1])**0.5
                 prototype_normalized = F.normalize(model.prototype_vectors,p=2,dim=1)#/factor
-                cur_basis_matrix = torch.squeeze(prototype_normalized)#*slots #[2000,dim, 4]
+                # 把每一个小P变成长度为1 [2000,dim, 4]，这是为了防止P的模长对于正交loss的干扰，jiabang's alert,非常重要！
+                cur_basis_matrix = torch.squeeze(prototype_normalized)#*slots #[2000,dim, 4] 此语句冗余
                 #cur_basis_matrix = cur_basis_matrix.mean(-1).mean(-1) # [2000, dim]
                 subspace_basis_matrix = cur_basis_matrix.reshape(model.num_classes,model.num_prototypes_per_class,-1)#[200,10,dim*4]
                 subspace_basis_matrix_T = torch.transpose(subspace_basis_matrix,1,2) #[200,10,dim*4]->[200,4*dim,10]
                 orth_operator = torch.matmul(subspace_basis_matrix,subspace_basis_matrix_T)  # [200,10,dim] [200,dim,10] -> [200,10,10]
                 I_operator = torch.eye(subspace_basis_matrix.size(1),subspace_basis_matrix.size(1)).cuda() #[10,10]
                 difference_value = orth_operator - I_operator #[200,10,10]-[10,10]->[200,10,10]
-                orth_cost = torch.sum(torch.relu(torch.norm(difference_value,p=1,dim=[1,2]) - 0)) #[200]->[1]
+                orth_cost = torch.sum(torch.relu(torch.norm(difference_value,p=1,dim=[1,2]) - 0)) #[200]->[1]，正交loss
+                # 这个正交loss是只对类内的P鼓励他要保持语义多样化，而没有照顾到类间P的语义多样化
+
    
                 ### component distance loss 
                 """
