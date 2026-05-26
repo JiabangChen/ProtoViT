@@ -212,7 +212,7 @@ for epoch in range(num_train_epochs):
     # version 1, learn slots before push 
 from settings import coefs_slots
 coh_weight = coefs_slots['coh']
-coefs['coh']  = coh_weight
+coefs['coh']  = coh_weight # 在微调slots时，更新coherence loss的权重
 log(f'Coefs for slots training: {coefs}')
 for epoch in range(slots_train_epoch):
     tnt.joint(model=ppnet, log=log)

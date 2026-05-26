@@ -123,48 +123,27 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
                 """
                 Penalize the max cosine distance between the 1, 2, 3, 4 ... patches to the each the other patch
                 """
-                # proto_norm_k = F.normalize(model.prototype_vectors,p=2, dim=1)# each of the prototype patch has norm 1
-                # #dist_all = torch.zeros((1000)).cuda()
-                # dist_init = 1- F.cosine_similarity(proto_norm_k[:, :,0], proto_norm_k[:, :, 0])
-                # for j in range((model.prototype_shape[-1])):
-                #     for k in range((model.prototype_shape[-1])):
-                #         dist_init += 1 - F.cosine_similarity(proto_norm_k[:, :, k], proto_norm_k[:, :, j])
-                # avg_diff = dist_init.sum()
+                # jiabang's change, modify the logic of coherence loss
+                proto_norm_k = F.normalize(model.prototype_vectors, p=2, dim=1) # 首先还是要对每一个小P做归一化使其模长=1
+                proto_norm_k = proto_norm_k.permute(0, 2, 1)  # [num_prototypes, 4, dim]
+                pairwise_cos = torch.matmul(proto_norm_k, proto_norm_k.transpose(1, 2)) # （2000，4，4）
+                # 其中每一个元素意味着某一个P的某两个小P之间做cosine similarity。因为每一个小P模长是1，因此求cosine similarity就是直接点积
+                pairwise_dist = 1 - pairwise_cos  # [num_prototypes, K, K]
 
-                # proto_norm_k = F.normalize(model.prototype_vectors,p=2, dim=1)# each of the prototype patch has norm 1
-                # dist_init = 1- F.cosine_similarity(proto_norm_k[:, :,0], proto_norm_k[:, :, 0])
-                # dist_jk = torch.tensor([]).cuda()#torch.empty((proto_norm_k.shape[0], proto_norm_k.shape[-1]))
-                # for j in range((model.prototype_shape[-1])):
-                #     dist_jk = torch.tensor([]).cuda()
-                #     for k in range((model.prototype_shape[-1])):
-                #         cos_jk = 1 - F.cosine_similarity(proto_norm_k[:, :, k], proto_norm_k[:, :, j])
-                #         dist_jk = torch.concat((dist_jk, cos_jk.unsqueeze(-1)), dim = -1)
-                #     #dist_jk_slots = dist_jk*slots
-                #     dist_jk_max, _ = dist_jk.max(dim=-1)
-                #     dist_init += dist_jk_max
-                # avg_diff = dist_init.sum()
+                slots_per_proto = slots.squeeze(0)  # [num_prototypes, K]
+                pairwise_slots = slots_per_proto.unsqueeze(2) * slots_per_proto.unsqueeze(1) # 形状是（2000，4，4），每一个元素
+                # 意味着某一个P的某两个小P的指示函数乘积
 
-                proto_norm_k = F.normalize(model.prototype_vectors,p=2, dim=1)# each of the prototype patch has norm 1
-                dist_jk = 1- F.cosine_similarity(proto_norm_k[:, :,0], proto_norm_k[:, :, 0])
-                dist_init = torch.tensor([]).cuda()#torch.empty((proto_norm_k.shape[0], proto_norm_k.shape[-1]))
-                for j in range((model.prototype_shape[-1])):
-                    dist_jk = 1- F.cosine_similarity(proto_norm_k[:, :,0], proto_norm_k[:, :, 0])
-                    for k in range((model.prototype_shape[-1])):
-                        cos_jk = 1 - F.cosine_similarity(proto_norm_k[:, :, k], proto_norm_k[:, :, j])
-                        dist_jk += cos_jk#torch.concat((dist_jk, cos_jk.unsqueeze(-1)), dim = -1)
-                    #dist_jk_max, _ = dist_jk.max(dim=-1)
-                    dist_init = torch.concat((dist_init, cos_jk.unsqueeze(-1)), dim = -1)
-                # find the prototype patch that is most disimilar to the others 
-                dist_init_slots = dist_init*slots
-                most_disimilar, _ = dist_init_slots.max(-1)
-                avg_diff = most_disimilar.sum()
+                # Eq. 4: for each prototype, penalize the most dissimilar included sub-prototype pair.
+                most_disimilar, _ = (pairwise_dist * pairwise_slots).flatten(1).max(dim=1) # （2000）
+                avg_diff = most_disimilar.mean()
 
-                # l2 norm of slots to encourage sparsity 
+                # l2 norm of slots to encourage sparsity
                 if use_l1_mask:
                     l1_mask = 1 - torch.t(model.prototype_class_identity).cuda()
                     l1 = (model.last_layer.weight * l1_mask).norm(p=1)
                 else:
-                    l1 = model.last_layer.weight.norm(p=1) 
+                    l1 = model.last_layer.weight.norm(p=1)
 
             else:
                 min_distance, _ = torch.min(min_distances, dim=1)
@@ -182,8 +161,8 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
             total_avg_separation_cost += avg_separation_cost.item()
             total_orth_loss += orth_cost.item()
             total_comp_loss += avg_diff.item()
-            avg_number_patch = (slots >= 0.5).sum()/slots.shape[1]
-            avg_slots = slots.squeeze(0).sum(1)/slots.shape[1]
+            avg_number_patch = (slots >= 0.5).sum()/slots.shape[1] # 即每一个P平均有多少个小P的指示函数是大于0.5的
+            avg_slots = slots.squeeze(0).sum(1)/slots.shape[1] # 即四个小P，每一个小P的平均指示函数值
         # compute gradient and do SGD step
         if is_train:
             if class_specific:
@@ -221,7 +200,7 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
 
     end = time.time()
 
-    log('\ttime: \t{0}'.format(end -  start))
+    log('\ttime: \t{0}'.format(end -  start)) # 一个epoch跑了多久
     #log('\tlearning rate info: \t{0}'.format(optimizer))
     log('\ttotal loss: \t{0}'.format(total_loss / n_batches))
     log('\tcross ent: \t{0}'.format(total_cross_entropy / n_batches))
@@ -230,26 +209,27 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
     log('\tslot of prototype 0: \t{0}'.format(slots.squeeze()[0]))
     log('\tEstimated avg number of subpatches: \t{0}'.format(avg_number_patch))
     log('\tEstimated avg slots logit: \t{0}'.format(avg_slots))
-    
+
     if class_specific:
         log('\tseparation:\t{0}'.format(total_separation_cost / n_batches))
         log('\tavg separation:\t{0}'.format(total_avg_separation_cost / n_batches))
     log('\tcoherence loss: \t\t{0}%'.format(total_comp_loss / n_batches))
     log('\taccu: \t\t{0}%'.format(n_correct / n_examples * 100))
     log('\tl1: \t\t{0}'.format(model.last_layer.weight.norm(p=1).item()))
-    p = model.prototype_vectors.view(model.num_prototypes, -1).cpu()
+    p = model.prototype_vectors.view(model.num_prototypes, -1).cpu() # （2000，384*4）
     with torch.no_grad():
-        p_avg_pair_dist = torch.mean(list_of_distances(p, p))
+        p_avg_pair_dist = torch.mean(list_of_distances(p, p)) # 这里输出的意义是求出所有的两个P（由四个小P堆叠而来）两两之间的距离的
+        # 平方，形成一个2000 x 2000的矩阵，然后对整体求均值
     log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()))
     loss_values = {
     "cross entropy Loss": total_cross_entropy / n_batches,
     "clst loss":  total_cluster_cost / n_batches,
     'sep loss': total_separation_cost / n_batches,
     'avg separation_cost':total_avg_separation_cost / n_batches,
-    'l1 loss': model.last_layer.weight.norm(p=1).item(),
+    'l1 loss': model.last_layer.weight.norm(p=1).item(), # 这里的l1_loss似乎是全部FC层的权重的绝对值之和，而非非某类权重之和
     'orth loss':total_orth_loss/n_batches,
     'acc':n_correct / n_examples * 100}
-    return (n_correct / n_examples), loss_values
+    return (n_correct / n_examples), loss_values # 输出这一个epoch的平均acc和各类loss的平均值
 
 
 def train(model, dataloader, optimizer, class_specific=False, coefs=None, log=print, ema = None, clst_k = 1,sum_cls = True):
