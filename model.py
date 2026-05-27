@@ -344,6 +344,8 @@ class PPNet(nn.Module):
         # 这里用最大cosine similarity score减去实际的score来表示某一个P到某一张图的距离 （B，2000）
         if get_f:
             return conv_features, min_distances, indices_reordered
+        # 这里输出的conv_features （B，384，14，14）输出的是backbone输出的patch token和CLS token相减后产生的张量
+        # indices_reordered （B，2000，4）输出的是在考虑adjacent mask的情况下每一个小P与其最相似的那个token的idx
         return max_activation_slots, min_distances, values_reordered
         # values_reordered形状是（B，2000，4），表示对于每一张图，每一个P的每一个小P在考虑adjacent mask的情况下和这张图的cosine similarity score
 
