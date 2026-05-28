@@ -162,7 +162,7 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
             total_orth_loss += orth_cost.item()
             total_comp_loss += avg_diff.item()
             avg_number_patch = (slots >= 0.5).sum()/slots.shape[1] # 即每一个P平均有多少个小P的指示函数是大于0.5的
-            avg_slots = slots.squeeze(0).sum(1)/slots.shape[1] # 即四个小P，每一个小P的平均指示函数值
+            avg_slots = slots.squeeze(0).sum(1)/slots.shape[2] # 即每一个P的的平均指示函数值
         # compute gradient and do SGD step
         if is_train:
             if class_specific:

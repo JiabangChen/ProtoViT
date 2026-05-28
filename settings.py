@@ -2,14 +2,14 @@ base_architecture = 'deit_small_patch16_224'
 radius = 1 # unit of patches 
 img_size = 224
 if base_architecture == 'deit_small_patch16_224':
-    prototype_shape = (2000, 384, 4) # 传统P方法是（2000，384，1，1）即表达单个P向量的长和宽，这里的4是有几个prototypical parts
+    prototype_shape = (20, 384, 4) # 传统P方法是（2000，384，1，1）即表达单个P向量的长和宽，这里的4是有几个prototypical parts
 elif base_architecture == 'deit_tiny_patch16_224':
-    prototype_shape = (2000, 192, 4)
+    prototype_shape = (20, 192, 4)
 elif base_architecture == 'cait_xxs24_224':
-    prototype_shape = (2000, 192, 4)
-
+    prototype_shape = (20, 192, 4)
+# jiabang's change, make it support 2-class cell classification
 dropout_rate = 0.0
-num_classes = 200
+num_classes = 2 # jiabang's change, make it support 2-class cell classification
 prototype_activation_function = 'log'
 add_on_layers_type = 'regular'
 experiment_run = 'exp1'
@@ -18,9 +18,10 @@ data_path =  "./datasets/cub200_cropped/" # 适配数据集读取路径，jiaban
 train_dir = data_path + 'train_cropped_augmented/'
 test_dir = data_path + 'test_cropped/'
 train_push_dir = data_path + 'train_cropped/'
-train_batch_size = 128
-test_batch_size = 100
-train_push_batch_size = 75
+train_batch_size = 32
+test_batch_size = 32
+train_push_batch_size = 32
+# jiabang's change, make it support 2-class cell classification
 
 joint_optimizer_lrs = {'features': 5e-5,#2e-5,#1e-4,#1e-5,
                        'prototype_vectors': 3e-3}
