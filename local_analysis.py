@@ -27,6 +27,21 @@ from typing import List, Optional
 import copy
 import pickle
 
+def load_trusted_model_checkpoint(checkpoint_path, device):
+    """
+    Load checkpoints written by this project.
+
+    save.py stores the full PPNet object with torch.save(model, ...), not only a
+    state_dict. PyTorch 2.6 changed torch.load's default to weights_only=True,
+    which refuses custom classes such as model.PPNet. These checkpoints must
+    therefore be loaded as full Python objects, and only from trusted sources.
+    """
+    try:
+        return torch.load(checkpoint_path, map_location=device, weights_only=False)
+    except TypeError:
+        # Older PyTorch versions do not have the weights_only argument.
+        return torch.load(checkpoint_path, map_location=device)
+
 ##### HELPER FUNCTIONS FOR PLOTTING
 def makedir(path):
     '''
@@ -261,7 +276,7 @@ def analyze(opt: Optional[List[str]]) -> None:
     log('load model from ' + load_model_path)
     log('model base architecture: ' + model_base_architecture)
     log('experiment run: ' + experiment_run)
-    ppnet = torch.load(load_model_path)
+    ppnet = load_trusted_model_checkpoint(load_model_path, device)
     ppnet = ppnet.to(device) # jiabang's change
     normalize = transforms.Normalize(mean=mean,
                                  std=std)
