@@ -100,7 +100,7 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
                 avg_separation_cost = \
                     torch.sum(values * prototypes_of_wrong_class, dim=1) / (torch.sum(prototypes_of_wrong_class, dim=1))
                 # jiabang's change，删除values.shape[-1]*，逻辑才是对的，即对于每一个样本，都把非此样本类的P的各个小P与此样本的相似值沿着
-                # 每一个小P维度求和，然后除以小P总数，结果是（B，4）
+                # P的数量维度求和，然后除以P总数，结果是（B，4），即非此样本类的各个小P对此样本的相似值的均值
                 avg_separation_cost = torch.mean(avg_separation_cost) # 然后这里对每一个样本，每一个小P的平均相似值求和之后除以（B*4）
                 
                 #optimize orthogonality of prototype_vector, borrowed from tesnet 
@@ -114,7 +114,9 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
                 subspace_basis_matrix_T = torch.transpose(subspace_basis_matrix,1,2) #[200,10,dim*4]->[200,4*dim,10]
                 orth_operator = torch.matmul(subspace_basis_matrix,subspace_basis_matrix_T)  # [200,10,dim] [200,dim,10] -> [200,10,10]
                 I_operator = torch.eye(subspace_basis_matrix.size(1),subspace_basis_matrix.size(1)).cuda() #[10,10]
-                difference_value = orth_operator - I_operator #[200,10,10]-[10,10]->[200,10,10]
+                difference_value = orth_operator - prototype_normalized.shape[-1] * I_operator #[200,10,10]-[10,10]->[200,10,10]
+                # jiabang's change,这里必须要让I乘上小P的数量。因为本来是让每一个小P的长度等于1，然后级联之后再去做正交loss，因此一个P和P
+                # 乘积的值是4，如果不乘以小P的数量，可能导致做差后的结果矩阵的对角线上均为3。
                 orth_cost = torch.sum(torch.relu(torch.norm(difference_value,p=1,dim=[1,2]) - 0)) #[200]->[1]，正交loss
                 # 这个正交loss是只对类内的P鼓励他要保持语义多样化，而没有照顾到类间P的语义多样化
 
@@ -213,7 +215,7 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
     if class_specific:
         log('\tseparation:\t{0}'.format(total_separation_cost / n_batches))
         log('\tavg separation:\t{0}'.format(total_avg_separation_cost / n_batches))
-    log('\tcoherence loss: \t\t{0}%'.format(total_comp_loss / n_batches))
+    log('\tcoherence loss: \t\t{0}'.format(total_comp_loss / n_batches))
     log('\taccu: \t\t{0}%'.format(n_correct / n_examples * 100))
     log('\tl1: \t\t{0}'.format(model.last_layer.weight.norm(p=1).item()))
     p = model.prototype_vectors.view(model.num_prototypes, -1).cpu() # （2000，384*4）
