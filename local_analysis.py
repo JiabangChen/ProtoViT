@@ -297,8 +297,15 @@ def analyze(opt: Optional[List[str]]) -> None:
                             class_specific=True, log=log)
         log(f'the accuracy of the model is: {accu}')
     from analysis_settings import check_list
+    class_dirs = sorted([
+        d for d in os.listdir(local_analysis_path)
+        if os.path.isdir(os.path.join(local_analysis_path, d))
+    ])
+    assert len(class_dirs) == num_classes, \
+        f'Expected {num_classes} class folders under {local_analysis_path}, found {class_dirs}'
+    # jiabang's change, 不要让log文件也和normal/class一样被当成文件夹然后进入下面的for循环里，会报错
     for num in range(0,num_classes):
-        test_image_dir = os.path.join(local_analysis_path, sorted(os.listdir(local_analysis_path))[num])
+        test_image_dir = os.path.join(local_analysis_path, class_dirs[num])
         files = sorted([
             f for f in os.listdir(test_image_dir)
             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'))
